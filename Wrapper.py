@@ -23,6 +23,7 @@ W_CAND_IGNORE = 0
 W_CAND_OTHER = 0.01
 W_CAND = W_CAND_IGNORE
 GENE_OUT = "top_gen_score_w_%d" % W_CAND
+W_TYPE_NAME = {W_CAND_OTHER: 'OtherCat', W_CAND_IGNORE: 'IgnoreCat'}
 class BBBGN:
     def __init__(self, data_dir="input_matrix", ifold=1, num_layers=4):
 
@@ -115,7 +116,7 @@ class BBBGN:
         all_vals = []
         all_tests = []
         all_gene_names = []
-        for epoch in range(1, 3):
+        for epoch in range(1, 21):
             start = time.time()
             loss, acc = self.train(epoch)
             print(f'Epoch {epoch:02d}, Loss: {loss:.4f}, Approx. Train: {acc:.4f}')
@@ -123,7 +124,7 @@ class BBBGN:
             all_tests.append(eval_test)
             all_vals.append(eval_val)
             all_gene_names.append(top_genes)
-            print(eval_val, eval_test, top_genes, emax)
+            print(eval_val, eval_test, len(top_genes), emax)
             print(f'Epoch: {epoch:02d} Val: {eval_val:.4f}  Test: {eval_test:.4f} Smax: {emax:.4f}')
 
             times.append(time.time() - start)
@@ -132,11 +133,12 @@ class BBBGN:
         ar = np.asarray(all_vals)
         id = np.argmax(ar)
         print("Max: ", all_vals[id], all_tests[id])
-        print("Selected Genes: ")
-        print(all_gene_names[id])
+        # print("Selected Genes: ")
+        # print(all_gene_names[id])
         with open(GENE_OUT + "_%d.json" % fold_id, 'w') as f:
             json.dump(all_gene_names[id], f)
 
+        return all_gene_names[id]
 
 def evalx(score_val_pos, score_candidates):
     eval_val = torch.concatenate((score_candidates, score_val_pos), dim=0)
@@ -187,7 +189,7 @@ def evalx2(score_val_pos, score_candidates, val_ids, candidate_ids):
     original_ids = all_ids[rs[:N_TOP]]
     print("Original IDs: ", original_ids)
     top_gene_names = [gene_map[k] for k in original_ids]
-    print("Top gene names: ", top_gene_names)
+    print("Top gene names: ", top_gene_names[:20])
     top_gene_scores = {}
     for ii in range(N_TOP):
         top_gene_scores[top_gene_names[ii]] = float(top_scores[ii])
@@ -204,14 +206,32 @@ def evalx2(score_val_pos, score_candidates, val_ids, candidate_ids):
 
     return s1, smax, top_gene_scores
 
-
+def update_dict(dsource, dtarget):
+    for k, v in dsource.items():
+        try:
+            vt = dtarget[k]
+        except:
+            vt = 0
+        dtarget[k] = v + vt
 if __name__ == '__main__':
     freeze_support()
     K_FOLDS = 10
+    total_folds = {}
     for k in range(K_FOLDS):
         random.seed(0)
         torch.manual_seed(0)
         print("------Start fold {}------".format(k))
         model = BBBGN(ifold=k, num_layers=5)
-        model.run(k)
+        fold_result = model.run(k)
+        update_dict(fold_result, total_folds)
         print("________________________")
+    total_fold_avg = {}
+    for k,v in total_folds.items():
+        total_fold_avg[k] = v / K_FOLDS
+    sortedDict = OrderedDict(sorted(total_fold_avg.items(), key=lambda item: item[1], reverse=True))
+    with open("output_%s.json" % W_TYPE_NAME[W_CAND], "w") as f:
+        f.write('{\n')
+        for i, (k, v) in enumerate(sortedDict.items()):
+            comma = ',' if i < len(sortedDict) - 1 else ''
+            f.write(f'  {json.dumps(k)}: {json.dumps(v)}{comma}\n')
+        f.write('}\n')
