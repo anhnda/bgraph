@@ -8,6 +8,7 @@ from collections import OrderedDict
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 
 from BBBData import BBBData
@@ -19,7 +20,7 @@ from sagex import SAGEX
 
 # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 N_TOP = 10000
-W_CAND_IGNORE = 0
+W_CAND_IGNORE = 1e-6
 W_CAND_OTHER = 0.01
 W_CAND = W_CAND_IGNORE
 GENE_OUT = "top_gen_score_w_%d" % W_CAND
@@ -66,10 +67,34 @@ class BBBGN:
             self.optimizer.zero_grad()
             y = batch.y[:batch.batch_size]
             y_hat = self.model(batch.x, batch.edge_index.to(self.device))[:batch.batch_size]
+            if (torch.isnan(y_hat).any()):
+                print("Nan yhat")
+                exit(-1)
+            if torch.isinf(y_hat).any():
+                print("Detected -inf or inf in logits")
+
+            # y_hat = torch.clamp(y_hat, min=-20, max=20)
+            assert y.dtype == torch.long
+            assert y_hat.shape[0] == y.shape[0]
+            # print("Unique y:", y.unique())
+            # print("y_hat shape:", y_hat.shape)
+            assert y.max().item() < y_hat.shape[1]
+
             loss = F.cross_entropy(y_hat, y, weight=torch.tensor([0.05, 1, W_CAND]).to(self.device))
+
             # print(y.shape, y_hat.shape)
+            if (torch.isnan(loss)):
+                print("Nan loss")
+                exit(-1)
             loss.backward()
+            # clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
+            for name, param in self.model.named_parameters():
+                if torch.isnan(param).any():
+                    print(f"NaN detected in parameter: {name}")
+                    exit(-1)
+
+
 
             total_loss += float(loss) * batch.batch_size
             total_correct += int((y_hat.argmax(dim=-1) == y).sum())
@@ -218,6 +243,8 @@ if __name__ == '__main__':
     K_FOLDS = 10
     total_folds = {}
     for k in range(K_FOLDS):
+        # if k != 1:
+        #     continue
         random.seed(0)
         torch.manual_seed(0)
         print("------Start fold {}------".format(k))
